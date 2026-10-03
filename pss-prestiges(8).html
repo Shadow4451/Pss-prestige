@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liste de prestiges - Pixel Starships</title>
+<style>
+  :root{--bg:#11131c;--card:#1a1d2b;--line:#2c3045;--txt:#e9eaf2;--mute:#8d92ad;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--acc:#5b8cff}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--txt);line-height:1.45}
+  main{max-width:760px;margin:0 auto;padding:16px 14px 60px}
+  h1{font-size:1.4rem;margin:8px 0 2px}
+  h2{font-size:1.05rem;margin:0 0 10px}
+  .sub{color:var(--mute);margin:0 0 16px;font-size:.9rem}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  input,button{font:inherit;color:inherit;padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:#0f1119}
+  input{flex:1;min-width:0}
+  button{background:var(--acc);border-color:var(--acc);color:#fff;cursor:pointer}
+  button.sec{background:transparent;border-color:var(--line);color:var(--txt)}
+  button.sm{padding:2px 8px;font-size:.78rem}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .msg{color:var(--mute);font-size:.88rem;margin:6px 0;word-break:break-word}
+  .err{color:var(--bad)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:.82rem;background:#0f1119}
+  .chip.used{opacity:.4;text-decoration:line-through}
+  .chip button{padding:0 0 0 6px;background:none;border:0;color:var(--mute)}
+  .item{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);padding:8px 0}
+  .node{margin:6px 0}
+  .kids{margin-left:8px;padding-left:12px;border-left:2px solid var(--line)}
+  .st-ok{color:var(--ok)} .st-bad{color:var(--bad)} .st-warn{color:var(--warn)}
+  textarea{width:100%;height:90px;font:inherit;font-size:.85rem;color:inherit;background:#0f1119;border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0}
+  details{margin:8px 0}
+  summary{cursor:pointer;color:var(--acc);font-size:.9rem}
+  small{color:var(--mute)}
+  label{font-size:.88rem;color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Liste de prestiges</h1>
+  <p class="sub">Pixel Starships. Tout ce que tu fais ici reste enregistré dans ce navigateur.</p>
+
+  <section>
+    <h2>1. Mon équipage</h2>
+    <div id="loadMsg" class="msg">Chargement des données du jeu...</div>
+    <details open>
+      <summary>Importer mes crews depuis pss.reality.net</summary>
+      <p class="msg">Sur leur site, lance une recherche avec ton pseudo et copie colle la liste de tes crew ici (pour gagner du temps).</p>
+      <textarea id="importBox" placeholder="Colle ici la réponse (elle contient « All Crew: ... »)"></textarea>
+      <div class="row"><button id="importBtn">Importer</button></div>
+      <div id="importMsg" class="msg"></div>
+    </details>
+    <div class="row">
+      <input id="manual" list="names" placeholder="Ou ajouter à la main : Laura x3, Hot Dog, ...">
+      <button class="sec" id="addManual">Ajouter</button>
+    </div>
+    <div id="crewInfo" class="msg"></div>
+    <div id="chips" class="chips"></div>
+  </section>
+
+  <section>
+    <h2>2. Prestige voulu</h2>
+    <div class="row">
+      <input id="target" list="names" placeholder="Nom du crew à obtenir">
+      <button id="search">Voir les recettes</button>
+    </div>
+    <label><input type="checkbox" id="showAll" style="flex:none"> Afficher aussi les recettes impossibles</label>
+    <div id="recMsg" class="msg"></div>
+    <div id="plan"></div>
+  </section>
+
+  <section>
+    <h2>3. Plusieurs prestiges en même temps</h2>
+    <p class="msg">Ajoute plusieurs crews voulus : le site cherche comment en faire le plus possible sans utiliser deux fois le même crew (avec le nombre d'étapes de prestige maximum que tu choisis ci-dessous).</p>
+    <div class="row">
+      <input id="wantIn" list="names" placeholder="Nom d'un crew voulu">
+      <button class="sec" id="wantAdd">Ajouter</button>
+    </div>
+    <div id="wantChips" class="chips"></div>
+    <div class="row" style="margin-top:10px;align-items:center">
+      <label for="maxSteps">Étapes de prestige maximum par crew :</label>
+      <select id="maxSteps" style="padding:8px;border-radius:8px;border:1px solid var(--line);background:#0f1119;color:inherit"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+    </div>
+    <div class="row" style="margin-top:10px"><button id="solve">Trouver le meilleur plan</button></div>
+    <div id="solveMsg" class="msg"></div>
+    <div id="solveOut"></div>
+  </section>
+
+  <section>
+    <h2>4. Ma liste de prestiges</h2>
+    <div id="wish"></div>
+  </section>
+  <datalist id="names"></datalist>
+</main>
+
+<script>
+const API = 'https://api.pixelstarships.com';
+const KEY = 'pss-prestiges-v1';
+const $ = id => document.getElementById(id);
+
+// ---------- Sauvegarde ----------
+let S = { units: [], wish: [], wanted: [] };
+try { S = Object.assign(S, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+delete S.pseudo; delete S.deviceKey; delete S.loginVersion;
+S.wish = (S.wish || []).filter(w => w.plan);
+S.wanted = S.wanted || [];
+S.maxSteps = S.maxSteps || 3;
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+// ---------- API ----------
+let lastRaw = '';
+async function getXml(path) {
+  const r = await fetch(API + path);
+  lastRaw = r.ok ? await r.text() : 'HTTP ' + r.status;
+  if (!r.ok) throw new Error('Erreur ' + r.status);
+  return new DOMParser().parseFromString(lastRaw, 'text/xml');
+}
+const tags = (doc, tag) => [...doc.getElementsByTagName(tag)];
+
+let designs = {}, byName = {};
+async function loadDesigns() {
+  const doc = await getXml('/CharacterService/ListAllCharacterDesigns2?languageKey=en');
+  tags(doc, 'CharacterDesign').forEach(e => {
+    const id = e.getAttribute('CharacterDesignId'), name = e.getAttribute('CharacterDesignName');
+    designs[id] = { id, name };
+    byName[name.toLowerCase()] = id;
+  });
+  $('names').innerHTML = Object.values(designs).map(d => `<option value="${d.name}">`).join('');
+}
+const nameOf = id => (designs[id] || { name: 'Crew #' + id }).name;
+
+// ---------- Crews et réservations ----------
+const leaves = n => n.a ? [...leaves(n.a), ...leaves(n.b)] : [n.uid];
+const used = () => new Set(S.wish.flatMap(w => leaves(w.plan)));
+let TENT = new Set(); // crews déjà pris par le plan en cours de construction
+const freeOf = (did, ex = []) => { const u = used(); return S.units.filter(x => x.did === did && !u.has(x.uid) && !TENT.has(x.uid) && !ex.includes(x.uid)); };
+function pick(a, b) {
+  const ua = freeOf(a)[0]; if (!ua) return null;
+  const ub = freeOf(b, [ua.uid])[0]; if (!ub) return null;
+  return [ua.uid, ub.uid];
+}
+
+function addManual() {
+  const parts = $('manual').value.split(/[,;\n]+/).map(p => p.trim()).filter(Boolean);
+  const unknown = []; let added = 0;
+  parts.forEach(p => {
+    const m = p.match(/^(.*?)\s*[x×]\s*(\d+)$/i);
+    const id = byName[(m ? m[1] : p).toLowerCase()];
+    const qty = m ? Math.min(+m[2], 30) : 1;
+    if (!id) { unknown.push(p); return; }
+    for (let i = 0; i < qty; i++) { S.units.push({ uid: 'm' + Date.now() + Math.random().toString(36).slice(2, 8), did: id, manual: true }); added++; }
+  });
+  $('manual').value = unknown.join(', '); save(); renderAll();
+  if (unknown.length) $('crewInfo').textContent += ' Noms non reconnus (laissés dans le champ) : ' + unknown.join(', ') + '.';
+}
+function importCrews() {
+  const box = $('importBox'), out = $('importMsg');
+  let t = box.value;
+  const m = t.match(/All Crew:\s*([\s\S]*?)(?:<\/p>|\d+\s+Paths? found|$)/i);
+  t = (m ? m[1] : t).replace(/<[^>]*>/g, ' ').replace(/\\n/g, ' ').replace(/&amp;/g, '&').replace(/&#0?39;|\\u0027/g, "'");
+  const names = t.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+  const counts = {}, unknown = [];
+  names.forEach(n => { const id = byName[n.toLowerCase()]; if (id) counts[id] = (counts[id] || 0) + 1; else unknown.push(n); });
+  if (!Object.keys(counts).length) { out.className = 'msg err'; out.textContent = 'Aucun crew reconnu dans ce texte. Vérifie que tu as copié toute la réponse.'; return; }
+  const oldImp = S.units.filter(u => u.imported), keep = S.units.filter(u => !u.imported);
+  const byDid = {}; oldImp.forEach(u => (byDid[u.did] = byDid[u.did] || []).push(u));
+  const next = [];
+  Object.entries(counts).forEach(([did, c]) => {
+    const ex = byDid[did] || [];
+    for (let i = 0; i < c; i++) next.push(ex[i] || { uid: 'i' + Date.now() + Math.random().toString(36).slice(2, 8), did, imported: true });
+  });
+  const kept = new Set(next.map(u => u.uid));
+  const dropped = oldImp.filter(u => !kept.has(u.uid)).map(u => u.uid);
+  S.units = keep.concat(next);
+  S.wish = S.wish.filter(w => !leaves(w.plan).some(x => dropped.includes(x)));
+  save(); renderAll();
+  out.className = 'msg';
+  out.textContent = next.length + ' crews importés.' + (unknown.length ? ' Non reconnus : ' + unknown.join(', ') + '.' : '');
+  box.value = '';
+}
+
+function removeUnit(uid) {
+  S.units = S.units.filter(u => u.uid !== uid);
+  S.wish = S.wish.filter(w => !leaves(w.plan).includes(uid));
+  save(); renderAll();
+}
+function renderChips() {
+  const u = used();
+  $('crewInfo').textContent = S.units.length ? S.units.length + ' crews, dont ' + u.size + ' réservés (barrés) par ta liste.' : 'Aucun crew pour le moment.';
+  $('chips').innerHTML = S.units.map(x =>
+    `<span class="chip ${u.has(x.uid) ? 'used' : ''}">${nameOf(x.did)}${x.manual ? `<button title="Retirer" onclick="removeUnit('${x.uid}')">×</button>` : ''}</span>`).join('');
+}
+
+// ---------- Recettes ----------
+const cache = {};
+async function recipesOf(did) {
+  if (cache[did]) return cache[did];
+  const doc = await getXml('/CharacterService/PrestigeCharacterTo?languageKey=en&characterDesignId=' + did);
+  const seen = new Set(), rec = [];
+  [...doc.getElementsByTagName('*')].forEach(e => {
+    const a = e.getAttribute('CharacterDesignId1'), b = e.getAttribute('CharacterDesignId2');
+    if (a && b) { const k = [a, b].sort().join('-'); if (!seen.has(k)) { seen.add(k); rec.push([a, b]); } }
+  });
+  return cache[did] = rec;
+}
+async function pool(items, fn, n = 8) {
+  let i = 0;
+  await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) { const x = items[i++]; try { await fn(x); } catch (e) {} } }));
+}
+// Un crew est « fabricable » si une de ses recettes est faisable directement avec mes crews libres
+const isCraftable = x => cache[x] ? cache[x].some(([p, q]) => !!pick(p, q)) : false;
+
+async function analyze(did, cb) {
+  const say = cb || (t => { $('recMsg').textContent = t; });
+  const rows = await recipesOf(did);
+  const need = new Set();
+  rows.forEach(([a, b]) => {
+    const fa = freeOf(a).length > 0, fb = freeOf(b).length > 0;
+    if (fa && !fb) need.add(b); else if (fb && !fa) need.add(a);
+  });
+  const todo = [...need].filter(x => !cache[x]).slice(0, 60);
+  let done = 0;
+  await pool(todo, async x => {
+    await recipesOf(x);
+    say('Analyse des étapes intermédiaires : ' + (++done) + '/' + todo.length);
+    if (done % 10 === 0) renderPlan();
+  });
+  say('');
+}
+
+// ---------- Arbre de plan ----------
+let plan = null, NODES = {}, NID = 0, loading = new Set();
+const mk = did => { const n = { id: ++NID, did, mode: freeOf(did).length ? 'own' : 'make', choice: null }; NODES[n.id] = n; return n; };
+
+function allocate(root, fix) {
+  const taken = [], res = {}; let ok = true;
+  (function walk(n) {
+    if (n.mode === 'own') {
+      const u = freeOf(n.did, taken)[0];
+      if (u) { taken.push(u.uid); res[n.id] = u.uid; }
+      else if (fix) { n.mode = 'make'; n.choice = null; ok = false; }
+      else ok = false;
+    }
+    else if (n.choice) { walk(n.choice[0]); walk(n.choice[1]); }
+    else ok = false;
+  })(root);
+  return { ok, res };
+}
+
+function ensure(did) {
+  if (loading.has(did)) return;
+  loading.add(did);
+  analyze(did).catch(() => {}).then(() => { loading.delete(did); renderPlan(); });
+}
+
+const possibleCount = x => cache[x] ? cache[x].filter(([p, q]) => !!pick(p, q)).length : 0;
+function ingr(x) {
+  if (freeOf(x).length) return `<span class="st-ok">${nameOf(x)} (libre)</span>`;
+  if (isCraftable(x)) { const c = possibleCount(x); return `<span class="st-warn">${nameOf(x)} (à fabriquer : ${c} recette${c > 1 ? 's' : ''} possible${c > 1 ? 's' : ''})</span>`; }
+  if (S.units.some(u => u.did === x)) return `<span class="st-warn">${nameOf(x)} (réservé)</span>`;
+  return `<span class="st-bad">${nameOf(x)} (manquant)</span>`;
+}
+function rowState(a, b) {
+  if (pick(a, b)) return 0;
+  const f = x => freeOf(x).length > 0 || isCraftable(x);
+  if (f(a) && f(b) && (freeOf(a).length || freeOf(b).length)) return 1;
+  return 2;
+}
+function recList(n) {
+  if (!cache[n.did]) { ensure(n.did); return '<small>Chargement des recettes...</small>'; }
+  if (!cache[n.did].length) return '<small>Ce crew ne peut pas être obtenu par prestige.</small>';
+  const weight = (a, b) => [a, b].reduce((t, x) => t + (freeOf(x).length ? 0 : possibleCount(x)), 0);
+  const rows = cache[n.did].map(([a, b]) => ({ a, b, s: rowState(a, b), w: weight(a, b) }))
+    .sort((x, y) => x.s - y.s || y.w - x.w);
+  const shown = $('showAll').checked ? rows : rows.filter(r => r.s < 2);
+  const tag = ['directe', 'en plusieurs étapes', 'impossible'];
+  return (shown.map(r => `<div class="item"><div>${ingr(r.a)} + ${ingr(r.b)}<br><small>${tag[r.s]}</small></div>
+    <button class="${r.s === 2 ? 'sec' : ''}" onclick="choose(${n.id},'${r.a}','${r.b}')">Choisir</button></div>`).join(''))
+    || '<small>Aucune recette possible avec tes crews libres. Coche « Afficher aussi les recettes impossibles » pour explorer.</small>';
+}
+function nodeHtml(n, al) {
+  const nm = nameOf(n.did);
+  if (n.mode === 'own') {
+    const has = al.res[n.id];
+    return `<div class="node"><span class="${has ? 'st-ok' : 'st-bad'}">${nm} ${has ? '(ton crew libre)' : '(plus de crew libre)'}</span> <button class="sec sm" onclick="setMode(${n.id},'make')">Le fabriquer</button></div>`;
+  }
+  const head = `<b>${nm}</b>` + (n !== plan && freeOf(n.did).length ? ` <button class="sec sm" onclick="setMode(${n.id},'own')">Utiliser le mien</button>` : '');
+  if (n.choice) return `<div class="node">${head} <button class="sec sm" onclick="unchoose(${n.id})">Changer de recette</button><div class="kids">${nodeHtml(n.choice[0], al)}${nodeHtml(n.choice[1], al)}</div></div>`;
+  return `<div class="node">${head}<div>${recList(n)}</div></div>`;
+}
+function renderPlan() {
+  if (!plan) { TENT = new Set(); $('plan').innerHTML = ''; return; }
+  TENT = new Set();
+  const al = allocate(plan, true);
+  TENT = new Set(Object.values(al.res));
+  $('plan').innerHTML = nodeHtml(plan, al) +
+    `<div class="row" style="margin-top:12px"><button ${al.ok ? '' : 'disabled'} onclick="addPlan()">Ajouter à ma liste</button></div>` +
+    (al.ok ? '' : '<div class="msg">Choisis une recette à chaque étape jusqu\'à n\'utiliser que tes crews libres.</div>');
+}
+function choose(id, a, b) { const n = NODES[id]; n.choice = [mk(a), mk(b)]; renderPlan(); }
+function unchoose(id) { NODES[id].choice = null; renderPlan(); }
+function setMode(id, m) { const n = NODES[id]; n.mode = m; n.choice = null; renderPlan(); }
+
+async function searchRecipes() {
+  const id = byName[$('target').value.trim().toLowerCase()];
+  const msg = $('recMsg');
+  if (!id) { msg.className = 'msg err'; msg.textContent = 'Nom de crew inconnu. Choisis-en un dans la liste proposée.'; return; }
+  msg.className = 'msg'; msg.textContent = 'Recherche des recettes...';
+  plan = mk(id); plan.mode = 'make';
+  try { await recipesOf(id); } catch (e) { msg.className = 'msg err'; msg.textContent = 'Impossible de lire les recettes. ' + e.message; plan = null; }
+  renderPlan();
+}
+
+function addPlan() {
+  TENT = new Set();
+  const al = allocate(plan);
+  if (!al.ok) return;
+  const ser = n => n.mode === 'own' ? { did: n.did, uid: al.res[n.id] } : { did: n.did, a: ser(n.choice[0]), b: ser(n.choice[1]) };
+  S.wish.push({ target: plan.did, plan: ser(plan) });
+  save(); plan = null; TENT = new Set(); $('recMsg').textContent = ''; renderAll();
+}
+function removeWish(i) { S.wish.splice(i, 1); save(); renderAll(); }
+
+const describe = n => n.a ? `${nameOf(n.did)} (${describe(n.a)} + ${describe(n.b)})` : nameOf(n.did);
+function renderWish() {
+  $('wish').innerHTML = S.wish.length ? S.wish.map((w, i) =>
+    `<div class="item"><div><b>${nameOf(w.target)}</b><br><small>${describe(w.plan.a)} + ${describe(w.plan.b)}</small></div>
+     <button class="sec" onclick="removeWish(${i})">Retirer</button></div>`).join('')
+    : '<p class="msg">Ta liste est vide. Cherche un crew à l\'étape 2 et ajoute un prestige.</p>';
+}
+
+
+// ---------- Optimiseur : plusieurs prestiges en même temps ----------
+let AV = {}, LAST = null;
+const addNeed = (x, y) => { const n = { ...x }; for (const k in y) n[k] = (n[k] || 0) + y[k]; return n; };
+const fitsAV = need => Object.keys(need).every(k => (AV[k] || 0) >= need[k]);
+
+let GEN = new Map();
+function gen(did, depth, root) {
+  const key = did + '|' + depth + '|' + (root ? 1 : 0);
+  if (GEN.has(key)) return GEN.get(key);
+  const out = [];
+  if (!root) out.push({ t: { did }, need: { [did]: 1 }, s: 0 });
+  if (depth > 0 && cache[did]) {
+    for (const [a, b] of cache[did]) {
+      if (out.length > 600) break;
+      const xs = gen(a, depth - 1); if (!xs.length) continue;
+      const ys = gen(b, depth - 1); if (!ys.length) continue;
+      for (const x of xs) for (const y of ys) {
+        const need = addNeed(x.need, y.need);
+        if (fitsAV(need)) out.push({ t: { did, a: x.t, b: y.t }, need, s: x.s + y.s + 1 });
+      }
+    }
+  }
+  const res = dedupe(out, root ? 150 : 40);
+  GEN.set(key, res);
+  return res;
+}
+function dedupe(list, cap = 150) {
+  const m = new Map();
+  list.forEach(c => { const k = Object.keys(c.need).sort().map(d => d + ':' + c.need[d]).join(','); if (!m.has(k) || m.get(k).s > c.s) m.set(k, c); });
+  return [...m.values()].sort((a, b) => a.s - b.s).slice(0, cap);
+}
+
+// Télécharge les recettes des crews intermédiaires, niveau par niveau (nombre de requêtes limité)
+async function prefetch(targets, D, say) {
+  const levelCap = Math.min(60 * targets.length, 200);
+  let frontier = [...new Set(targets)].map(did => ({ did, p: D, pr: 0 }));
+  let done = 0;
+  await pool(frontier.filter(f => !cache[f.did]), async f => { await recipesOf(f.did); say('Recettes récupérées : ' + (++done)); });
+  while (frontier.length) {
+    const next = new Map();
+    for (const f of frontier) {
+      if (f.p < 2) continue;
+      for (const [a, b] of cache[f.did] || []) {
+        [[a, b], [b, a]].forEach(([x, y]) => {
+          if ((AV[x] || 0) > 0) return;
+          const pr = (AV[y] || 0) > 0 ? 0 : 1, p = f.p - 1, o = next.get(x);
+          if (!o || p > o.p || (p === o.p && pr < o.pr)) next.set(x, { did: x, p, pr });
+        });
+      }
+    }
+    frontier = [...next.values()].sort((u, v) => u.pr - v.pr);
+    const fresh = frontier.filter(f => !cache[f.did]).slice(0, levelCap);
+    const keep = new Set(fresh.map(f => f.did));
+    frontier = frontier.filter(f => cache[f.did] || keep.has(f.did));
+    await pool(fresh, async f => { await recipesOf(f.did); say('Recettes récupérées : ' + (++done)); });
+  }
+}
+
+function solveBest(cands) {
+  const order = cands.map((_, i) => i).sort((i, j) => cands[i].length - cands[j].length);
+  const rem = { ...AV }, cur = []; let best = { n: -1, s: 0, pick: [] }, timeout = false; const t0 = Date.now();
+  (function dfs(k, n, s) {
+    if (Date.now() - t0 > 3000) { timeout = true; return; }
+    const left = order.length - k;
+    if (n + left < best.n || (n + left === best.n && s >= best.s)) return;
+    if (k === order.length) { best = { n, s, pick: cur.slice() }; return; }
+    const i = order[k];
+    for (const c of cands[i]) {
+      if (!Object.keys(c.need).every(d => (rem[d] || 0) >= c.need[d])) continue;
+      for (const d in c.need) rem[d] -= c.need[d];
+      cur[i] = c; dfs(k + 1, n + 1, s + c.s); cur[i] = null;
+      for (const d in c.need) rem[d] += c.need[d];
+    }
+    cur[i] = null; dfs(k + 1, n, s);
+  })(0, 0, 0);
+  return { ...best, timeout };
+}
+
+function renderWanted() {
+  $('wantChips').innerHTML = S.wanted.map((d, i) => `<span class="chip">${nameOf(d)}<button title="Retirer" onclick="removeWanted(${i})">×</button></span>`).join('');
+}
+function removeWanted(i) { S.wanted.splice(i, 1); save(); renderWanted(); }
+function addWanted() {
+  const id = byName[$('wantIn').value.trim().toLowerCase()];
+  if (!id) { $('solveMsg').className = 'msg err'; $('solveMsg').textContent = 'Nom de crew inconnu. Choisis-en un dans la liste proposée.'; return; }
+  S.wanted.push(id); $('wantIn').value = ''; $('solveMsg').textContent = ''; save(); renderWanted();
+}
+
+async function runSolve() {
+  const msg = $('solveMsg'), out = $('solveOut');
+  out.innerHTML = ''; LAST = null; msg.className = 'msg';
+  if (!S.wanted.length) { msg.textContent = 'Ajoute d\'abord au moins un crew voulu.'; return; }
+  if (!S.units.length) { msg.textContent = 'Charge ou importe d\'abord tes crews (étape 1).'; return; }
+  $('solve').disabled = true;
+  TENT = new Set();
+  try {
+    const u = used(); AV = {};
+    S.units.forEach(x => { if (!u.has(x.uid)) AV[x.did] = (AV[x.did] || 0) + 1; });
+    const targets = [...S.wanted];
+    const D = +$('maxSteps').value || 3; S.maxSteps = D; save();
+    GEN = new Map();
+    await prefetch(targets, D, txt => { msg.textContent = txt; });
+    msg.textContent = 'Recherche de la meilleure combinaison...';
+    await new Promise(r => setTimeout(r, 30));
+    const cands = targets.map(t => gen(t, D, true));
+    const res = solveBest(cands);
+    LAST = { targets, picks: res.pick };
+    const done = res.pick.filter(Boolean).length;
+    msg.textContent = done + ' crew' + (done > 1 ? 's' : '') + ' sur ' + targets.length + ' réalisable' + (done > 1 ? 's' : '') + ' en même temps, sans réutiliser un même crew.' + (res.timeout ? ' (Recherche arrêtée après 3 s : le résultat peut ne pas être le meilleur possible.)' : '');
+    const rows = targets.map((t, i) => {
+      const c = res.pick[i];
+      return c ? `<div class="item"><div><b>${nameOf(t)}</b><br><small>${describe(c.t.a)} + ${describe(c.t.b)}</small></div></div>`
+               : `<div class="item"><div><b>${nameOf(t)}</b><br><small class="st-bad">Pas possible avec les crews qui restent (' + D + ' étapes maximum).</small></div></div>`;
+    }).join('');
+    out.innerHTML = rows + (done ? '<div class="row" style="margin-top:12px"><button onclick="addSolved()">Ajouter ce plan à ma liste</button></div>' : '');
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'Erreur pendant la recherche : ' + e.message; }
+  $('solve').disabled = false;
+}
+
+function addSolved() {
+  if (!LAST) return;
+  TENT = new Set();
+  const taken = new Set(used());
+  const toNode = t => {
+    if (t.a) return { did: t.did, a: toNode(t.a), b: toNode(t.b) };
+    const u = S.units.find(x => x.did === t.did && !taken.has(x.uid));
+    if (!u) throw new Error('crew introuvable');
+    taken.add(u.uid); return { did: t.did, uid: u.uid };
+  };
+  try {
+    const add = [];
+    LAST.picks.forEach((c, i) => { if (c) add.push({ target: LAST.targets[i], plan: toNode(c.t) }); });
+    S.wish.push(...add);
+    save(); LAST = null; $('solveOut').innerHTML = ''; $('solveMsg').className = 'msg'; $('solveMsg').textContent = 'Plan ajouté à ta liste.';
+    renderAll();
+  } catch (e) { $('solveMsg').className = 'msg err'; $('solveMsg').textContent = 'Impossible d\'ajouter le plan : ' + e.message; }
+}
+
+function renderAll() { renderChips(); renderPlan(); renderWish(); renderWanted(); }
+
+// ---------- Démarrage ----------
+$('addManual').onclick = addManual;
+$('importBtn').onclick = importCrews;
+$('wantAdd').onclick = addWanted;
+$('maxSteps').value = String(S.maxSteps);
+$('solve').onclick = runSolve;
+$('search').onclick = searchRecipes;
+$('showAll').onchange = renderPlan;
+renderAll();
+loadDesigns().then(() => { $('loadMsg').textContent = 'Données du jeu chargées. Importe tes crews ci-dessous, ou ajoute-les à la main.'; renderAll(); })
+  .catch(() => { $('loadMsg').className = 'msg err'; $('loadMsg').textContent = 'Impossible de charger les données du jeu. Ouvre ce fichier directement depuis ton ordinateur ou ton téléphone.'; });
+</script>
+</body>
+</html>
