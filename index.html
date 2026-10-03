@@ -47,7 +47,7 @@
     <div id="loadMsg" class="msg">Chargement des données du jeu...</div>
     <details open>
       <summary>Importer mes crews depuis pss.reality.net</summary>
-      <p class="msg">Sur leur site, lance une recherche avec ton pseudo et copie colle la liste de tes crew ici (pour gagner du temps).</p>
+      <p class="msg">Sur leur site, lance une recherche, ouvre la requête « run-script » (F12, onglet Réseau), puis l'onglet Réponse. Copie tout le texte de « output » et colle-le ici.</p>
       <textarea id="importBox" placeholder="Colle ici la réponse (elle contient « All Crew: ... »)"></textarea>
       <div class="row"><button id="importBtn">Importer</button></div>
       <div id="importMsg" class="msg"></div>
@@ -58,6 +58,7 @@
     </div>
     <div id="crewInfo" class="msg"></div>
     <div id="chips" class="chips"></div>
+    <div class="row" style="margin-top:10px"><button class="sec sm" id="clearAll">Vider mon équipage</button></div>
   </section>
 
   <section>
@@ -124,12 +125,14 @@ async function loadDesigns() {
   const doc = await getXml('/CharacterService/ListAllCharacterDesigns2?languageKey=en');
   tags(doc, 'CharacterDesign').forEach(e => {
     const id = e.getAttribute('CharacterDesignId'), name = e.getAttribute('CharacterDesignName');
-    designs[id] = { id, name };
+    designs[id] = { id, name, rarity: e.getAttribute('Rarity') };
     byName[name.toLowerCase()] = id;
   });
   $('names').innerHTML = Object.values(designs).map(d => `<option value="${d.name}">`).join('');
 }
 const nameOf = id => (designs[id] || { name: 'Crew #' + id }).name;
+const RANK = { Common: 1, Elite: 2, Unique: 3, Epic: 4, Hero: 5, Special: 6, Legendary: 7 };
+const rk = id => RANK[(designs[id] || {}).rarity] || 0;
 
 // ---------- Crews et réservations ----------
 const leaves = n => n.a ? [...leaves(n.a), ...leaves(n.b)] : [n.uid];
@@ -182,15 +185,24 @@ function importCrews() {
 }
 
 function removeUnit(uid) {
+  if (used().has(uid) && !confirm('Ce crew est réservé par un prestige de ta liste. Le supprimer retirera aussi ce prestige. Continuer ?')) return;
   S.units = S.units.filter(u => u.uid !== uid);
   S.wish = S.wish.filter(w => !leaves(w.plan).includes(uid));
+  save(); renderAll();
+}
+function clearAll() {
+  if (!S.units.length) return;
+  const extra = S.wish.length ? ' Ta liste de prestiges (' + S.wish.length + ') sera aussi vidée, car elle utilise ces crews.' : '';
+  if (!confirm('Supprimer tous tes crews (' + S.units.length + ') ?' + extra)) return;
+  S.units = []; S.wish = []; LAST = null;
+  $('solveOut').innerHTML = ''; $('solveMsg').textContent = '';
   save(); renderAll();
 }
 function renderChips() {
   const u = used();
   $('crewInfo').textContent = S.units.length ? S.units.length + ' crews, dont ' + u.size + ' réservés (barrés) par ta liste.' : 'Aucun crew pour le moment.';
   $('chips').innerHTML = S.units.map(x =>
-    `<span class="chip ${u.has(x.uid) ? 'used' : ''}">${nameOf(x.did)}${x.manual ? `<button title="Retirer" onclick="removeUnit('${x.uid}')">×</button>` : ''}</span>`).join('');
+    `<span class="chip ${u.has(x.uid) ? 'used' : ''}">${nameOf(x.did)}<button title="Retirer ce crew" onclick="removeUnit('${x.uid}')">×</button></span>`).join('');
 }
 
 // ---------- Recettes ----------
@@ -272,8 +284,8 @@ function recList(n) {
   if (!cache[n.did]) { ensure(n.did); return '<small>Chargement des recettes...</small>'; }
   if (!cache[n.did].length) return '<small>Ce crew ne peut pas être obtenu par prestige.</small>';
   const weight = (a, b) => [a, b].reduce((t, x) => t + (freeOf(x).length ? 0 : possibleCount(x)), 0);
-  const rows = cache[n.did].map(([a, b]) => ({ a, b, s: rowState(a, b), w: weight(a, b) }))
-    .sort((x, y) => x.s - y.s || y.w - x.w);
+  const rows = cache[n.did].map(([a, b]) => ({ a, b, s: rowState(a, b), w: weight(a, b), r: rk(a) + rk(b) }))
+    .sort((x, y) => x.s - y.s || y.r - x.r || y.w - x.w);
   const shown = $('showAll').checked ? rows : rows.filter(r => r.s < 2);
   const tag = ['directe', 'en plusieurs étapes', 'impossible'];
   return (shown.map(r => `<div class="item"><div>${ingr(r.a)} + ${ingr(r.b)}<br><small>${tag[r.s]}</small></div>
@@ -342,7 +354,7 @@ function gen(did, depth, root) {
   const key = did + '|' + depth + '|' + (root ? 1 : 0);
   if (GEN.has(key)) return GEN.get(key);
   const out = [];
-  if (!root) out.push({ t: { did }, need: { [did]: 1 }, s: 0 });
+  if (!root) out.push({ t: { did }, need: { [did]: 1 }, s: 0, r: rk(did) });
   if (depth > 0 && cache[did]) {
     for (const [a, b] of cache[did]) {
       if (out.length > 600) break;
@@ -350,7 +362,7 @@ function gen(did, depth, root) {
       const ys = gen(b, depth - 1); if (!ys.length) continue;
       for (const x of xs) for (const y of ys) {
         const need = addNeed(x.need, y.need);
-        if (fitsAV(need)) out.push({ t: { did, a: x.t, b: y.t }, need, s: x.s + y.s + 1 });
+        if (fitsAV(need)) out.push({ t: { did, a: x.t, b: y.t }, need, s: x.s + y.s + 1, r: x.r + y.r });
       }
     }
   }
@@ -361,7 +373,7 @@ function gen(did, depth, root) {
 function dedupe(list, cap = 150) {
   const m = new Map();
   list.forEach(c => { const k = Object.keys(c.need).sort().map(d => d + ':' + c.need[d]).join(','); if (!m.has(k) || m.get(k).s > c.s) m.set(k, c); });
-  return [...m.values()].sort((a, b) => a.s - b.s).slice(0, cap);
+  return [...m.values()].sort((a, b) => a.s - b.s || b.r - a.r).slice(0, cap);
 }
 
 // Télécharge les recettes des crews intermédiaires, niveau par niveau (nombre de requêtes limité)
@@ -392,21 +404,24 @@ async function prefetch(targets, D, say) {
 
 function solveBest(cands) {
   const order = cands.map((_, i) => i).sort((i, j) => cands[i].length - cands[j].length);
-  const rem = { ...AV }, cur = []; let best = { n: -1, s: 0, pick: [] }, timeout = false; const t0 = Date.now();
-  (function dfs(k, n, s) {
+  const rem = { ...AV }, cur = []; let best = { n: -1, s: 0, r: 0, pick: [] }, timeout = false; const t0 = Date.now();
+  (function dfs(k, n, s, r) {
     if (Date.now() - t0 > 3000) { timeout = true; return; }
     const left = order.length - k;
-    if (n + left < best.n || (n + left === best.n && s >= best.s)) return;
-    if (k === order.length) { best = { n, s, pick: cur.slice() }; return; }
+    if (n + left < best.n || (n + left === best.n && s > best.s)) return;
+    if (k === order.length) {
+      if (n > best.n || s < best.s || (s === best.s && r > best.r)) best = { n, s, r, pick: cur.slice() };
+      return;
+    }
     const i = order[k];
     for (const c of cands[i]) {
       if (!Object.keys(c.need).every(d => (rem[d] || 0) >= c.need[d])) continue;
       for (const d in c.need) rem[d] -= c.need[d];
-      cur[i] = c; dfs(k + 1, n + 1, s + c.s); cur[i] = null;
+      cur[i] = c; dfs(k + 1, n + 1, s + c.s, r + c.r); cur[i] = null;
       for (const d in c.need) rem[d] += c.need[d];
     }
-    cur[i] = null; dfs(k + 1, n, s);
-  })(0, 0, 0);
+    cur[i] = null; dfs(k + 1, n, s, r);
+  })(0, 0, 0, 0);
   return { ...best, timeout };
 }
 
@@ -474,6 +489,7 @@ function renderAll() { renderChips(); renderPlan(); renderWish(); renderWanted()
 
 // ---------- Démarrage ----------
 $('addManual').onclick = addManual;
+$('clearAll').onclick = clearAll;
 $('importBtn').onclick = importCrews;
 $('wantAdd').onclick = addWanted;
 $('maxSteps').value = String(S.maxSteps);
