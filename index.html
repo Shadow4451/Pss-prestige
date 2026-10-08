@@ -31,6 +31,14 @@
   .kids{margin-left:8px;padding-left:12px;border-left:2px solid var(--line)}
   .st-ok{color:var(--ok)} .st-bad{color:var(--bad)} .st-warn{color:var(--warn)}
   textarea{width:100%;height:90px;font:inherit;font-size:.85rem;color:inherit;background:#0f1119;border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0}
+  .tnode{margin:4px 0}
+  .tkids{margin-left:6px;padding-left:12px;border-left:2px solid var(--line)}
+  .step{display:inline-block;font-size:.72rem;background:var(--acc);color:#fff;border-radius:999px;padding:0 8px;margin-right:4px}
+  .tbtn{font:inherit;font-weight:600;color:var(--txt);background:transparent;border:1px dashed var(--mute);border-radius:8px;padding:1px 8px;cursor:pointer}
+  .tbtn:hover{border-color:var(--acc);color:var(--acc)}
+  .wishitem{border-top:1px solid var(--line);padding:8px 0}
+  .wishitem:first-child{border-top:0}
+  .wishitem summary{color:var(--txt);font-size:1rem}
   details{margin:8px 0}
   summary{cursor:pointer;color:var(--acc);font-size:.9rem}
   small{color:var(--mute)}
@@ -333,19 +341,58 @@ function addPlan() {
   S.wish.push({ target: plan.did, plan: ser(plan) });
   save(); plan = null; TENT = new Set(); $('recMsg').textContent = ''; renderAll();
 }
+const newUid = () => 'd' + Date.now() + Math.random().toString(36).slice(2, 7);
+const leafNames = lv => lv.map(uid => nameOf((S.units.find(u => u.uid === uid) || {}).did)).join(', ');
+
+// Un crew de l'arbre vient d'être fabriqué dans le jeu : on retire les crews consommés et on ajoute le nouveau crew
+function completeNode(i, path) {
+  const w = S.wish[i]; if (!w) return;
+  let parent = null, key = null, n = w.plan;
+  for (const k of path) { parent = n; key = k; n = n[k]; }
+  if (!n || !n.a) return;
+  const lv = leaves(n);
+  if (!confirm('As-tu bien fabriqué « ' + nameOf(n.did) + ' » dans le jeu ?\n\nLes crews utilisés (' + leafNames(lv) + ') seront retirés de ton équipage et « ' + nameOf(n.did) + ' » sera ajouté à la place.')) return;
+  const uid = newUid();
+  S.units = S.units.filter(u => !lv.includes(u.uid));
+  S.units.push({ uid, did: n.did, manual: true });
+  parent[key] = { did: n.did, uid };
+  save(); renderAll();
+}
+// Le crew voulu au sommet de l'arbre est obtenu : le prestige quitte la liste
+function completeWish(i) {
+  const w = S.wish[i]; if (!w) return;
+  const lv = leaves(w.plan);
+  if (!confirm('As-tu bien obtenu « ' + nameOf(w.target) + ' » dans le jeu ?\n\nLes crews utilisés (' + leafNames(lv) + ') seront retirés de ton équipage, « ' + nameOf(w.target) + ' » sera ajouté, et ce prestige sera retiré de ta liste.')) return;
+  S.units = S.units.filter(u => !lv.includes(u.uid));
+  S.units.push({ uid: newUid(), did: w.target, manual: true });
+  S.wish.splice(i, 1);
+  save(); renderAll();
+}
 function removeWish(i) { S.wish.splice(i, 1); save(); renderAll(); }
 
-const describe = n => n.a ? `${nameOf(n.did)} (${describe(n.a)} + ${describe(n.b)})` : nameOf(n.did);
+// Arbre de prestige : les crews que tu possèdes sont en vert, chaque prestige est numéroté dans l'ordre à suivre
+function treeHtml(n, c, wi, path = '') {
+  if (!n.a) return `<div class="tnode"><span class="st-ok">${nameOf(n.did)}</span></div>`;
+  const kids = treeHtml(n.a, c, wi, path + 'a') + treeHtml(n.b, c, wi, path + 'b');
+  c.n++;
+  const label = (wi !== undefined && path)
+    ? `<button class="tbtn" title="Clique ici quand tu as fabriqué ce crew dans le jeu" onclick="completeNode(${wi},'${path}')">${nameOf(n.did)}</button>`
+    : `<b>${nameOf(n.did)}</b>`;
+  return `<div class="tnode">${label}<div class="tkids">${kids}</div></div>`;
+}
 function renderWish() {
-  $('wish').innerHTML = S.wish.length ? S.wish.map((w, i) =>
-    `<div class="item"><div><b>${nameOf(w.target)}</b><br><small>${describe(w.plan.a)} + ${describe(w.plan.b)}</small></div>
-     <button class="sec" onclick="removeWish(${i})">Retirer</button></div>`).join('')
+  const hint = '<p class="msg">Astuce : quand tu as fabriqué un crew de l\'arbre dans le jeu, clique sur son nom. Il passera en vert dans ton équipage (une confirmation est demandée).</p>';
+  $('wish').innerHTML = S.wish.length ? hint + S.wish.map((w, i) => {
+    const c = { n: 0 }, tree = treeHtml(w.plan, c, i);
+    return `<details class="wishitem" open><summary><b>${nameOf(w.target)}</b> <small>(${c.n} étape${c.n > 1 ? 's' : ''})</small></summary>${tree}
+      <div class="row" style="margin-top:8px"><button class="sm" onclick="completeWish(${i})">J'ai obtenu ce crew</button><button class="sec sm" onclick="removeWish(${i})">Retirer de la liste</button></div></details>`;
+  }).join('')
     : '<p class="msg">Ta liste est vide. Cherche un crew à l\'étape 2 et ajoute un prestige.</p>';
 }
 
 
 // ---------- Optimiseur : plusieurs prestiges en même temps ----------
-let AV = {}, LAST = null;
+let AV = {}, LAST = null, STOP = false, GEN_END = 0, GEN_CUT = false;
 const addNeed = (x, y) => { const n = { ...x }; for (const k in y) n[k] = (n[k] || 0) + y[k]; return n; };
 const fitsAV = need => Object.keys(need).every(k => (AV[k] || 0) >= need[k]);
 
@@ -357,7 +404,8 @@ function gen(did, depth, root) {
   if (!root) out.push({ t: { did }, need: { [did]: 1 }, s: 0, r: rk(did) });
   if (depth > 0 && cache[did]) {
     for (const [a, b] of cache[did]) {
-      if (out.length > 600) break;
+      if (out.length > 1500) break;
+      if (Date.now() > GEN_END) { GEN_CUT = true; break; }
       const xs = gen(a, depth - 1); if (!xs.length) continue;
       const ys = gen(b, depth - 1); if (!ys.length) continue;
       for (const x of xs) for (const y of ys) {
@@ -366,11 +414,11 @@ function gen(did, depth, root) {
       }
     }
   }
-  const res = dedupe(out, root ? 150 : 40);
+  const res = dedupe(out, root ? 300 : 80);
   GEN.set(key, res);
   return res;
 }
-function dedupe(list, cap = 150) {
+function dedupe(list, cap = 300) {
   const m = new Map();
   list.forEach(c => { const k = Object.keys(c.need).sort().map(d => d + ':' + c.need[d]).join(','); if (!m.has(k) || m.get(k).s > c.s) m.set(k, c); });
   return [...m.values()].sort((a, b) => a.s - b.s || b.r - a.r).slice(0, cap);
@@ -378,7 +426,7 @@ function dedupe(list, cap = 150) {
 
 // Télécharge les recettes des crews intermédiaires, niveau par niveau (nombre de requêtes limité)
 async function prefetch(targets, D, say) {
-  const levelCap = Math.min(60 * targets.length, 200);
+  const levelCap = Math.min(100 * targets.length, 400);
   let frontier = [...new Set(targets)].map(did => ({ did, p: D, pr: 0 }));
   let done = 0;
   await pool(frontier.filter(f => !cache[f.did]), async f => { await recipesOf(f.did); say('Recettes récupérées : ' + (++done)); });
@@ -402,11 +450,16 @@ async function prefetch(targets, D, say) {
   }
 }
 
-function solveBest(cands) {
+async function solveBest(cands, ms, tick) {
   const order = cands.map((_, i) => i).sort((i, j) => cands[i].length - cands[j].length);
-  const rem = { ...AV }, cur = []; let best = { n: -1, s: 0, r: 0, pick: [] }, timeout = false; const t0 = Date.now();
-  (function dfs(k, n, s, r) {
-    if (Date.now() - t0 > 3000) { timeout = true; return; }
+  const rem = { ...AV }, cur = []; let best = { n: -1, s: 0, r: 0, pick: [] }, timeout = false, count = 0; const t0 = Date.now();
+  async function dfs(k, n, s, r) {
+    if (timeout) return;
+    if (++count % 2000 === 0) {
+      if (STOP || Date.now() - t0 > ms) { timeout = true; return; }
+      tick(Math.round((Date.now() - t0) / 1000), best.n);
+      await new Promise(res => setTimeout(res, 0));   // laisse la page respirer
+    }
     const left = order.length - k;
     if (n + left < best.n || (n + left === best.n && s > best.s)) return;
     if (k === order.length) {
@@ -417,11 +470,13 @@ function solveBest(cands) {
     for (const c of cands[i]) {
       if (!Object.keys(c.need).every(d => (rem[d] || 0) >= c.need[d])) continue;
       for (const d in c.need) rem[d] -= c.need[d];
-      cur[i] = c; dfs(k + 1, n + 1, s + c.s, r + c.r); cur[i] = null;
+      cur[i] = c; await dfs(k + 1, n + 1, s + c.s, r + c.r); cur[i] = null;
       for (const d in c.need) rem[d] += c.need[d];
+      if (timeout) return;
     }
-    cur[i] = null; dfs(k + 1, n, s, r);
-  })(0, 0, 0, 0);
+    cur[i] = null; await dfs(k + 1, n, s, r);
+  }
+  await dfs(0, 0, 0, 0);
   return { ...best, timeout };
 }
 
@@ -449,17 +504,24 @@ async function runSolve() {
     const D = +$('maxSteps').value || 3; S.maxSteps = D; save();
     GEN = new Map();
     await prefetch(targets, D, txt => { msg.textContent = txt; });
-    msg.textContent = 'Recherche de la meilleure combinaison...';
-    await new Promise(r => setTimeout(r, 30));
+    msg.textContent = 'Préparation des combinaisons (la page peut se figer quelques secondes)...';
+    await new Promise(r => setTimeout(r, 50));
+    GEN_END = Date.now() + 20000; GEN_CUT = false;
     const cands = targets.map(t => gen(t, D, true));
-    const res = solveBest(cands);
+    STOP = false;
+    out.innerHTML = '<button class="sec sm" onclick="STOP = true">Arrêter et garder le meilleur résultat trouvé</button>';
+    const T0 = Date.now(), MAXMS = 30000;
+    const res = await solveBest(cands, MAXMS, (sec, n) => {
+      msg.textContent = 'Recherche de la meilleure combinaison... ' + sec + ' s (30 s maximum). Meilleur résultat pour l\'instant : ' + Math.max(n, 0) + '/' + targets.length;
+    });
+    const secs = Math.round((Date.now() - T0) / 1000);
     LAST = { targets, picks: res.pick };
     const done = res.pick.filter(Boolean).length;
-    msg.textContent = done + ' crew' + (done > 1 ? 's' : '') + ' sur ' + targets.length + ' réalisable' + (done > 1 ? 's' : '') + ' en même temps, sans réutiliser un même crew.' + (res.timeout ? ' (Recherche arrêtée après 3 s : le résultat peut ne pas être le meilleur possible.)' : '');
+    msg.textContent = done + ' crew' + (done > 1 ? 's' : '') + ' sur ' + targets.length + ' réalisable' + (done > 1 ? 's' : '') + ' en même temps, sans réutiliser un même crew.' + (res.timeout ? ' (Recherche arrêtée après ' + secs + ' s : le résultat peut ne pas être le meilleur possible.)' : '') + (GEN_CUT ? ' (Préparation interrompue : certaines combinaisons n\'ont pas été explorées.)' : '');
     const rows = targets.map((t, i) => {
       const c = res.pick[i];
-      return c ? `<div class="item"><div><b>${nameOf(t)}</b><br><small>${describe(c.t.a)} + ${describe(c.t.b)}</small></div></div>`
-               : `<div class="item"><div><b>${nameOf(t)}</b><br><small class="st-bad">Pas possible avec les crews qui restent (' + D + ' étapes maximum).</small></div></div>`;
+      return c ? `<div class="item" style="display:block">${treeHtml(c.t, { n: 0 })}</div>`
+               : `<div class="item"><div><b>${nameOf(t)}</b><br><small class="st-bad">Pas possible avec les crews qui restent (${D} étapes maximum).</small></div></div>`;
     }).join('');
     out.innerHTML = rows + (done ? '<div class="row" style="margin-top:12px"><button onclick="addSolved()">Ajouter ce plan à ma liste</button></div>' : '');
   } catch (e) { msg.className = 'msg err'; msg.textContent = 'Erreur pendant la recherche : ' + e.message; }
